@@ -1,0 +1,118 @@
+name: Automated Parallel Passive Reconnaissance (Secure Public Matrix)
+
+on:
+  workflow_dispatch: # 수동 실행
+
+permissions:
+  contents: write
+
+jobs:
+  # [마스터 분산 엔진]: 4개 그룹 x 3개 도구 = 총 12대 가상머신 동시 가동
+  matrix-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        group: ["00", "01", "02", "03"]
+        tool: [gau, waybackurls, secretfinder]
+      fail-fast: false
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # [보안 패치]: Public 레포이므로 타깃 목록을 Secret에서 가상머신 메모리에만 동적 생성
+    - name: Create Targets File from Secret
+      run: |
+        echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Set up Python
+      if: matrix.tool == 'secretfinder'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Assigned Tool Only
+      run: |
+        if [ "${{ matrix.tool }}" = "gau" ]; then
+          go install github.com/lc/gau/v2/cmd/gau@latest
+        elif [ "${{ matrix.tool }}" = "waybackurls" ]; then
+          go install github.com/tomnomnom/waybackurls@latest
+        elif [ "${{ matrix.tool }}" = "secretfinder" ]; then
+          go install github.com/lc/gau/v2/cmd/gau@latest
+          git clone https://github.com/m4ll0k/SecretFinder.git
+          cd SecretFinder && pip install -r requirements.txt
+        fi
+        echo "$HOME/go/bin" >> $GITHUB_PATH
+
+    - name: Grant Execute Permission
+      run: chmod +x scan_${{ matrix.tool }}.sh
+
+    - name: Run Matrix Parallel Scan
+      run: ./scan_${{ matrix.tool }}.sh ${{ matrix.group }}
+
+    # [★암호화 터널 핵심★]:results/ 폴더 내 데이터를 묶어 AES-256 자물쇠를 채움 (소음/지연 차단)
+    - name: Encrypt Results
+      run: |
+        mkdir -p encrypted_data
+        tar -czf - -C results/ . 2>/dev/null | gpg --symmetric --batch --yes --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" --cipher-algo AES256 --output encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
+
+    # 공개된 공간(Artifact)에는 암호화된 쓰레기 바이너리 파일만 안전하게 업로드
+    - name: Upload Encrypted Matrix Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: results-${{ matrix.tool }}-${{ matrix.group }}
+        path: encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
+        retention-days: 1
+
+  # [마스터 취합관]: 12대의 분산 데이터 복호화 후 엑셀 빌드 및 구글 드라이브 사출
+  excel-reporter:
+    runs-on: ubuntu-latest
+    needs: matrix-scan
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: pip install openpyxl google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+    # 취합관 가상머신에서도 엑셀 구조 설계를 위해 마스터 타깃 목록 복원
+    - name: Create Targets File from Secret
+      run: |
+        echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
+
+    - name: Download All Encrypted Results
+      uses: actions/download-artifact@v4
+      with:
+        path: encrypted_storage
+        merge-multiple: true
+
+    # [★암호화 터널 핵심★]: 다운로드한 공개 아티팩트 자물쇠를 가상머신 메모리상에서만 안전하게 해제
+    - name: Decrypt and Restore Results
+      run: |
+        mkdir -p results
+        for f in encrypted_storage/*.gpg; do
+          if [ -f "$f" ]; then
+            echo "[+] Decrypting and extracting: $f"
+            gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
+          fi
+        done
+
+    - name: Build Intelligent Excel Report
+      run: python txt_to_excel.py
+
+    # [보안 사출 핵심]: 구글 드라이브 로봇 인증서 복원 및 파이썬 업로드 스크립트 가동
+    - name: Upload Final Excel Report to Google Drive
+      run: |
+        echo "${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}" > service_account.json
+        python upload_to_gdrive.py
+      env:
+        GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
