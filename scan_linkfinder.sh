@@ -9,34 +9,32 @@ scan_jsluice() {
     local domain=$(echo "$1" | xargs)
     [[ -z "$domain" || "$domain" =~ ^# ]] && return
 
-    echo "[+] [$domain] [jsluice Matrix Worker] Discovering JS targets via gau..."
-    # 타겟 도메인의 JS 파일 목록 추출 (최대 100개)
-    echo "$domain" | gau 2>/dev/null | grep -E '\.js($|\?)' 2>/dev/null | head -n 100 > "results/${domain}_js_temp.txt"
+    # 1단계에서 고스란히 상속받은 마스터 JS 주소록 로드
+    local master_list="results/${domain}_js_master_list.txt"
 
-    if [ -s "results/${domain}_js_temp.txt" ]; then
-        echo "[+] [$domain] [jsluice Matrix Worker] Analyzing streams in memory (Anti-WAF)..."
-        
-        # 파일 목록을 한 줄씩 읽어가며 처리
+    if [ -s "$master_list" ]; then
+        echo "[+] [$domain] [Stage 2: jsluice Worker] Analyzing streaming JS data (0% Duplicate Recon)..."
+        head -n 100 "$master_list" > "results/${domain}_js_temp.txt"
+
         while read -r url; do
-            # [핵심 매커니즘]: 디스크에 파일을 쓰지 않고 curl로 받은 데이터를 jsluice로 다이렉트 패스
-            # -A 옵션으로 브라우저 위장, 딜레이를 주어 안전하게 수집
+            # 아카이브 호출 없이, 주소록에 적힌 JS 소스코드를 즉시 파이프로 엮어 메모리 스캔
             curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "$url" 2>/dev/null | jsluice urls 2>/dev/null >> "results/${domain}_jsluice_raw.json"
             sleep 0.5
-        done < "results/${domain}_js_temp.txt"
-        
-        # jsluice가 뱉어낸 JSON 결과물에서 깔끔하게 URL 경로만 추출하여 엑셀 가동 포맷으로 복원
+        } < "results/${domain}_js_temp.txt"
+
         if [ -s "results/${domain}_jsluice_raw.json" ]; then
+            # 기존 엑셀 리포터 호환을 위해 파일명을 _linkfinder.txt 로 복원 사출
             cat "results/${domain}_jsluice_raw.json" | jq -r '.url' 2>/dev/null | sort -u > "results/${domain}_linkfinder.txt"
             rm -f "results/${domain}_jsluice_raw.json"
         fi
+        rm -f "results/${domain}_js_temp.txt"
     else
-        echo "  -> [$domain] No JS assets found."
+        echo "  -> [$domain] No JS assets found from Stage 1 Index."
     fi
-    rm -f "results/${domain}_js_temp.txt"
 }
 
 export -f scan_jsluice
-echo "[*] Starting Dynamic Matrix jsluice Scanner for $TARGET_FILE..."
+echo "[*] Launching Stage 2 jsluice (LinkFinder) Analyzer Matrix for $TARGET_FILE..."
 xargs -P 5 -n 1 -a "$TARGET_FILE" -I {} bash -c 'scan_jsluice "{}"'
 
 rm -f targets_group*
