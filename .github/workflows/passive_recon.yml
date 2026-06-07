@@ -1,4 +1,4 @@
-name: Automated Parallel Passive Reconnaissance (Secure Public Matrix)
+name: Automated Parallel Passive Reconnaissance (Staged & Optimized Engine)
 
 on:
   workflow_dispatch: # 수동 실행
@@ -7,22 +7,69 @@ permissions:
   contents: write
 
 jobs:
-  # [마스터 분산 엔진]: 4개 그룹 x 4개 도구 = 총 16대 가상머신 동시 가동
-  matrix-scan:
+  # ==========================================
+  # [STAGE 1: 수집 전담 단계] 중복 트래픽 0% 달성
+  # ==========================================
+  collect-urls:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         group: ["00", "01", "02", "03"]
-        tool: [gau, waybackurls, linkfinder, trufflehog]
       fail-fast: false
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # [보안 패치]: Public 레포이므로 타깃 목록을 Secret에서 가상머신 메모리에만 동적 생성
     - name: Create Targets File from Secret
+      run: echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Install Collection Tools
       run: |
-        echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
+        go install github.com/lc/gau/v2/cmd/gau@latest
+        go install github.com/tomnomnom/waybackurls@latest
+        echo "$HOME/go/bin" >> $GITHUB_PATH
+
+    - name: Grant Execute Permission
+      run: chmod +x collect_urls.sh
+
+    - name: Run Stage 1 Passive Collector
+      run: ./collect_urls.sh ${{ matrix.group }}
+
+    # 수집된 원본 로그와 JS 마스터 주소록을 한 자물쇠로 채움
+    - name: Encrypt Stage 1 Package
+      run: |
+        mkdir -p encrypted_stage1
+        tar -czf - -C results/ . 2>/dev/null | gpg --symmetric --batch --yes --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" --cipher-algo AES256 --output encrypted_stage1/urls_${{ matrix.group }}.tar.gz.gpg
+
+    - name: Upload Stage 1 Intermediary Data
+      uses: actions/upload-artifact@v4
+      with:
+        name: urls-package-${{ matrix.group }}
+        path: encrypted_stage1/urls_${{ matrix.group }}.tar.gz.gpg
+        retention-days: 1
+
+  # ==========================================
+  # [STAGE 2: 분석 전담 단계] 1단계 데이터 상속 및 처리
+  # ==========================================
+  analyze-js:
+    runs-on: ubuntu-latest
+    needs: collect-urls # 1단계가 완벽히 끝나야 실행됨
+    strategy:
+      matrix:
+        group: ["00", "01", "02", "03"]
+        tool: [linkfinder, trufflehog] # 배관 유지를 위해 linkfinder(내부는 jsluice) 이름 고수
+      fail-fast: false
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Create Targets File from Secret
+      run: echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -35,47 +82,54 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install Assigned Tool Only
+    - name: Install Assigned Analysis Tool Only
       run: |
-        if [ "${{ matrix.tool }}" = "gau" ]; then
-          go install github.com/lc/gau/v2/cmd/gau@latest
-        elif [ "${{ matrix.tool }}" = "waybackurls" ]; then
-          go install github.com/tomnomnom/waybackurls@latest
-        elif [ "${{ matrix.tool }}" = "linkfinder" ]; then
-          go install github.com/lc/gau/v2/cmd/gau@latest
-          git clone https://github.com/GerbenJavado/LinkFinder.git
-          cd LinkFinder && pip install -r requirements.txt
+        if [ "${{ matrix.tool }}" = "linkfinder" ]; then
+          go install github.com/BishopFox/jsluice/cmd/jsluice@latest
+          sudo apt-get install jq -y
         elif [ "${{ matrix.tool }}" = "trufflehog" ]; then
-          go install github.com/lc/gau/v2/cmd/gau@latest
-          go install github.com/tomnomnom/waybackurls@latest
           curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
         fi
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
+    # 1단계에서 고생해서 받아온 주소록 패키지 다운로드
+    - name: Download Stage 1 Package
+      uses: actions/download-artifact@v4
+      with:
+        name: urls-package-${{ matrix.group }}
+        path: encrypted_storage
+
+    # 가상머신 메모리에 주소록 복호화 복원 (gau/wayback 로그 포함됨)
+    - name: Decrypt Stage 1 Intermediary Data
+      run: |
+        mkdir -p results
+        gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" encrypted_storage/urls_${{ matrix.group }}.tar.gz.gpg 2>/dev/null | tar -xzf - -C results/
+
     - name: Grant Execute Permission
       run: chmod +x scan_${{ matrix.tool }}.sh
 
-    - name: Run Matrix Parallel Scan
+    - name: Run Stage 2 Precision Scan
       run: ./scan_${{ matrix.tool }}.sh ${{ matrix.group }}
 
-    # [★암호화 터널 핵심★]: results/ 폴더 내 데이터를 묶어 AES-256 자물쇠를 채움
-    - name: Encrypt Results
+    # 분석 결과(trufflehog 또는 linkfinder 로그)가 추가된 폴더를 다시 최종 암호화
+    - name: Encrypt Stage 2 Final Package
       run: |
-        mkdir -p encrypted_data
-        tar -czf - -C results/ . 2>/dev/null | gpg --symmetric --batch --yes --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" --cipher-algo AES256 --output encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
+        mkdir -p encrypted_final
+        tar -czf - -C results/ . 2>/dev/null | gpg --symmetric --batch --yes --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" --cipher-algo AES256 --output encrypted_final/analysis_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
 
-    # 공개된 공간(Artifact)에는 암호화된 쓰레기 바이너리 파일만 안전하게 업로드
     - name: Upload Encrypted Matrix Results
       uses: actions/upload-artifact@v4
       with:
         name: results-${{ matrix.tool }}--${{ matrix.group }}
-        path: encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
+        path: encrypted_final/analysis_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
         retention-days: 1
 
-  # [마스터 취합관]: 16대의 분산 데이터 복호화 후 엑셀 빌드 및 깃허브 보관함 사출
+  # ==========================================
+  # [STAGE 3: 통합 마스터 리포트 마감]
+  # ==========================================
   excel-reporter:
     runs-on: ubuntu-latest
-    needs: matrix-scan
+    needs: analyze-js
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -88,10 +142,8 @@ jobs:
     - name: Install Dependencies
       run: pip install openpyxl requests
 
-    # 취합관 가상머신에서도 엑셀 구조 설계를 위해 마스터 타깃 목록 복원
     - name: Create Targets File from Secret
-      run: |
-        echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
+      run: echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
 
     - name: Download All Encrypted Results
       uses: actions/download-artifact@v4
@@ -99,13 +151,12 @@ jobs:
         path: encrypted_storage
         merge-multiple: true
 
-    # 다운로드한 공개 아티팩트 자물쇠를 가상머신 메모리상에서만 안전하게 해제
     - name: Decrypt and Restore Results
       run: |
         mkdir -p results
         for f in encrypted_storage/*.gpg; do
           if [ -f "$f" ]; then
-            echo "[+] Decrypting and extracting: $f"
+            echo "[+] Decrypting and merging patch: $f"
             gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
           fi
         done
@@ -113,7 +164,6 @@ jobs:
     - name: Build Intelligent Excel Report
       run: python -u txt_to_excel.py
 
-    # 최종 마스터 엑셀 업로드
     - name: Store Final Excel Report in GitHub Artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -121,12 +171,11 @@ jobs:
         path: reports/passive_recon_report_v1.xlsx
         retention-days: 14
 
-    # 디스코드 원클릭 다운로드 알림 사출
     - name: Alert Discord with Direct Download Link
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: |
         curl -H "Content-Type: application/json" \
              -X POST \
-             -d '{"content": "🚀 **[정찰 완료 - 통합 마스터 보고서]**\n🔒 데이터 중복 제거 및 65개 멀티 탭 엑셀 빌드가 성공적으로 완주되었습니다.\n\n📂 **안내사항:**\n하드코딩 추적(TruffleHog) 및 엔드포인트 추출(LinkFinder) 결과가 모두 통합되었습니다. 아래 링크에서 원클릭으로 마스터 엑셀을 바로 다운로드하세요!\n\n👇 **[보고서 다운로드 바로가기]**\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+             -d '{"content": "🚀 **[정찰 완료 - 최적화 마스터 보고서]**\n🔒 중복 트래픽 0% 2단계 가속 배관이 완주되었습니다.\n\n👇 **[보고서 다운로드 바로가기]**\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
              $DISCORD_WEBHOOK_URL
