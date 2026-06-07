@@ -4,14 +4,14 @@ import glob
 import urllib.parse
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
 
 def build_advanced_excel_report():
-    print("[+] Initializing Intelligent Excel Reporter Engine...")
+    # [개조] flush=True 추가로 실시간 모니터링 보장
+    print("[+] Initializing Intelligent Excel Reporter Engine...", flush=True)
     
     # 1. 마스터 타깃 목록 로드 (탭 분할 기준점)
     if not os.path.exists('targets.txt'):
-        print("[-] Error: targets.txt missing.")
+        print("[-] Error: targets.txt missing.", flush=True)
         return
         
     with open('targets.txt', 'r') as f:
@@ -25,10 +25,10 @@ def build_advanced_excel_report():
     txt_files = [f for f in txt_files if os.path.isfile(f)]
 
     if not txt_files:
-        print("[-] Warning: No decrypted text files found in results/ folder.")
+        print("[-] Warning: No decrypted text files found in results/ folder.", flush=True)
         return
 
-    print(f"[+] Processing {len(txt_files)} data source files...")
+    print(f"[+] Processing {len(txt_files)} data source files...", flush=True)
     
     for file_path in txt_files:
         filename = os.path.basename(file_path).lower()
@@ -57,11 +57,11 @@ def build_advanced_excel_report():
                             matrix_data[domain].add((url, source_tool))
                             break
         except Exception as e:
-            print(f"[-] Error reading {filename}: {e}")
+            print(f"[-] Error reading {filename}: {e}", flush=True)
 
     # 3. 고품격 엑셀 문서 작성 디자인 빌드
+    print("[+] Compiling pure grid data into Excel sheets...", flush=True)
     wb = Workbook()
-    # 기본 생성되는 첫 시트 제거 준비
     default_sheet = wb.active
 
     # 스타일 시트 에셋 정의 (가독성 극대화)
@@ -77,7 +77,6 @@ def build_advanced_excel_report():
         if not dataset:
             continue  # 데이터가 한 건도 없는 도메인은 탭 생성 패스
             
-        # 깃허브 탭 이름 제한(최대 31자) 조율 및 시트 생성
         safe_tab_name = domain[:30]
         ws = wb.create_sheet(title=safe_tab_name)
         sheets_created += 1
@@ -98,6 +97,8 @@ def build_advanced_excel_report():
         sorted_dataset = sorted(list(dataset), key=lambda x: (x[1], x[0]))
         
         for idx, (url, tool) in enumerate(sorted_dataset, 1):
+            if idx > 1048500: # 엑셀 시트 행 한계값 방어
+                break
             ws.append([idx, url, tool])
             current_row = ws.max_row
             ws.row_dimensions[current_row].height = 20
@@ -112,21 +113,11 @@ def build_advanced_excel_report():
             ws.cell(row=current_row, column=3).font = font_body
             ws.cell(row=current_row, column=3).alignment = align_center
 
-        # [🔥핵심 고도화]: 이 탭의 데이터 전체 영역에 '엑셀 자동 필터' 장착
-        max_row = ws.max_row
-        max_col_letter = get_column_letter(ws.max_column)
-        ws.auto_filter.ref = f"A1:{max_col_letter}{max_row}"
-
-        # 컬럼 너비 지능형 자동 맞춤
-        for col in ws.columns:
-            max_len = 0
-            col_letter = get_column_letter(col[0].column)
-            for cell in col:
-                if cell.value:
-                    # 한글/대문자 폭을 고려한 대략적인 글자 길이 산정
-                    max_len = max(max_len, len(str(cell.value)))
-            # 너비 제한 밸런스 패치 (최소 10, 최대 90)
-            ws.column_dimensions[col_letter].width = max(min(max_len + 3, 90), 10)
+        # [★지뢰 제거 완수★] 병목을 유발하던 자동 필터 및 ws.columns 루프 연산 완전 삭제
+        # 성능 부하가 전혀 없는 고정 안전 폭 레이아웃 강제 주입
+        ws.column_dimensions['A'].width = 8
+        ws.column_dimensions['B'].width = 85
+        ws.column_dimensions['C'].width = 18
 
     # 4. 마무리 및 마스터 파일 저장
     if sheets_created > 0:
@@ -134,9 +125,9 @@ def build_advanced_excel_report():
         os.makedirs('reports', exist_ok=True)
         report_path = 'reports/passive_recon_report_v1.xlsx'
         wb.save(report_path)
-        print(f"[+] [SUCCESS] Advanced filtered report generated at: {report_path}")
+        print(f"[+] [SUCCESS] Clean lightweight report generated at: {report_path}", flush=True)
     else:
-        print("[-] Error: Scan results were empty. Excel file not created.")
+        print("[-] Error: Scan results were empty. Excel file not created.", flush=True)
 
 if __name__ == '__main__':
     build_advanced_excel_report()
