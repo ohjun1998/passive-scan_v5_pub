@@ -1,4 +1,75 @@
-# [마스터 취합관]: 12대의 분산 데이터 복호화 후 엑셀 빌드 및 깃허브 보관함 사출
+name: Automated Parallel Passive Reconnaissance (Secure Public Matrix)
+
+on:
+  workflow_dispatch: # 수동 실행
+
+permissions:
+  contents: write
+
+jobs:
+  # [마스터 분산 엔진]: 4개 그룹 x 3개 도구 = 총 12대 가상머신 동시 가동
+  matrix-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        group: ["00", "01", "02", "03"]
+        #tool: [gau, waybackurls, secretfinder]
+        tool: [gau, waybackurls]
+      fail-fast: false
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # [보안 패치]: Public 레포이므로 타깃 목록을 Secret에서 가상머신 메모리에만 동적 생성
+    - name: Create Targets File from Secret
+      run: |
+        echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Set up Python
+      if: matrix.tool == 'secretfinder'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Assigned Tool Only
+      run: |
+        if [ "${{ matrix.tool }}" = "gau" ]; then
+          go install github.com/lc/gau/v2/cmd/gau@latest
+        elif [ "${{ matrix.tool }}" = "waybackurls" ]; then
+          go install github.com/tomnomnom/waybackurls@latest
+        elif [ "${{ matrix.tool }}" = "secretfinder" ]; then
+          go install github.com/lc/gau/v2/cmd/gau@latest
+          git clone https://github.com/m4ll0k/SecretFinder.git
+          cd SecretFinder && pip install -r requirements.txt
+        fi
+        echo "$HOME/go/bin" >> $GITHUB_PATH
+
+    - name: Grant Execute Permission
+      run: chmod +x scan_${{ matrix.tool }}.sh
+
+    - name: Run Matrix Parallel Scan
+      run: ./scan_${{ matrix.tool }}.sh ${{ matrix.group }}
+
+    # [★암호화 터널 핵심★]: results/ 폴더 내 데이터를 묶어 AES-256 자물쇠를 채움
+    - name: Encrypt Results
+      run: |
+        mkdir -p encrypted_data
+        tar -czf - -C results/ . 2>/dev/null | gpg --symmetric --batch --yes --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" --cipher-algo AES256 --output encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
+
+    # 공개된 공간(Artifact)에는 암호화된 쓰레기 바이너리 파일만 안전하게 업로드
+    - name: Upload Encrypted Matrix Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: results-${{ matrix.tool }}--${{ matrix.group }}
+        path: encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
+        retention-days: 1
+
+  # [마스터 취합관]: 12대의 분산 데이터 복호화 후 엑셀 빌드 및 깃허브 보관함 사출
   excel-reporter:
     runs-on: ubuntu-latest
     needs: matrix-scan
@@ -39,19 +110,15 @@
     - name: Build Intelligent Excel Report
       run: python -u txt_to_excel.py
 
-    # -----------------------------------------------------------------
     # [🔥 핵심 교체 1] 디코 첨부 대신 깃허브 자체 무제한 안전 보관소에 최종 엑셀 업로드
-    # -----------------------------------------------------------------
     - name: Store Final Excel Report in GitHub Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: passive-recon-master-report # 다운로드 버튼에 표시될 이름
-        path: reports/passive_recon_report_v1.xlsx # 생성된 마스터 엑셀 경로
-        retention-days: 14 # 14일 동안 무료 보관 후 자동 파기 (클라우드 용량 관리)
+        name: passive-recon-master-report
+        path: reports/passive_recon_report_v1.xlsx
+        retention-days: 14
 
-    # -----------------------------------------------------------------
     # [🔥 핵심 교체 2] 디스코드로는 파일 없이 "원클릭 다운로드 바로가기 링크"만 사출
-    # -----------------------------------------------------------------
     - name: Alert Discord with Direct Download Link
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
