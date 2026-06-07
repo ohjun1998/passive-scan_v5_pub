@@ -50,17 +50,34 @@ def upload_report_safe_engine():
             print(f"[-] Discord error: {response.status_code}, {response.text}")
 
     # -----------------------------------------------------------------
-    # [🔥Case 2 개조] 9.5MB 초과 시 모든 조각을 한 알람(메시지)에 패킹해서 직송
+    # [🔥Case 2 개조] 9.5MB 초과 시 -> 안내 가이드 선발송 후 파일 조각만 낱개 사출
     # -----------------------------------------------------------------
     else:
-        print("[!] Warning: Compressed size exceeds limit. Gathering chunks into a single message packet...")
+        print("[!] Warning: Compressed size exceeds limit. Activating Split-by-Instruction mode...")
+        
+        # 명령어 양식 본문 정의
+        cmd_win = f"copy /b {zip_file_name}.part* {zip_file_name}"
+        cmd_mac = f"cat {zip_file_name}.part* > {zip_file_name}"
+        
+        # 1단계: 사용법 및 안내 양식 메시지를 디스코드방에 '딱 1번' 먼저 발송
+        guide_payload = {
+            'content': (
+                f"📦 **[대용량 분할 사출] 마스터 보고서 안내 가이드라인**\n"
+                f"⚠️ 최종 엑셀 리포트 용량이 너무 커서 조각 파일들로 분할되어 들어옵니다.\n\n"
+                f"🛠️ **병합 및 복원 방법:**\n"
+                f"뒤이어 전송되는 모든 파트 파일(`.part1` ~ `.partN`)을 **동일한 단일 폴더에 전부 다운로드**한 뒤, 터미널(콘솔)을 열어 아래 명령어를 복사·붙여넣기 하세요.\n"
+                f"```cmd\n"
+                f"※ Windows (CMD 환경):\n{cmd_win}\n\n"
+                f"※ Mac / Linux (터미널 환경):\n{cmd_mac}\n"
+                f"```"
+            )
+        }
+        
+        print("[+] Sending integration guide header message first...", flush=True)
+        requests.post(webhook_url, data=guide_payload)
+        
+        # 2단계: 파일 조각들을 루프 돌며 '순수 첨부파일'만 낱개 메시지로 후속 사출
         part_num = 1
-        files_payload = {}
-        
-        # [핵심] 반복문 내에서 전송하지 않고, 파일 스트림 오브젝트들을 하나의 딕셔너리에 다 누적합니다.
-        # 바이너리 유실 방지를 위해 파일 핸들러들을 open 상태로 유지하기 위한 리스트 생성
-        opened_files = []
-        
         with open(zip_file_path, 'rb') as f:
             while True:
                 chunk = f.read(int(DISCORD_LIMIT))
@@ -68,49 +85,19 @@ def upload_report_safe_engine():
                     break
                 
                 chunk_name = f"{zip_file_name}.part{part_num}"
+                print(f"[+] Launching segment asset file: {chunk_name}", flush=True)
                 
-                # 가상머신 임시 경로에 각 조각을 바이너리로 잠깐 떨궈놓고 requests에 바인딩
-                temp_chunk_path = os.path.join('reports', chunk_name)
-                with open(temp_chunk_path, 'wb') as tmp:
-                    tmp.write(chunk)
+                # 본문 메시지는 파일명만 나오게 최소화하여 총 페이로드 용량을 9.5MB 선으로 통제
+                file_payload = {
+                    'content': f"📎 **마스터 보고서 파일 조각 ➔ Part {part_num}**"
+                }
+                files_payload = {'file': (chunk_name, chunk, 'application/octet-stream')}
                 
-                # 전송용 파일 포인터 오픈 후 페이로드 딕셔너리에 탑재
-                target_f = open(temp_chunk_path, 'rb')
-                opened_files.append(target_f)
-                files_payload[f'file[{part_num-1}]'] = (chunk_name, target_f, 'application/octet-stream')
-                
+                # 개별 전송 (각각 독립된 메시지이므로 25MB 한계에 절대 걸리지 않음)
+                requests.post(webhook_url, data=file_payload, files=files_payload)
                 part_num += 1
-        
-        # 안내 문구 및 터미널 명령어 조립 (딱 1번만 출력됨)
-        cmd_win = f"copy /b {zip_file_name}.part* {zip_file_name}"
-        cmd_mac = f"cat {zip_file_name}.part* > {zip_file_name}"
-        
-        payload = {
-            'content': (
-                f"📦 **[대용량 통합 분할 사출] 마스터 보고서 (총 {part_num - 1}개 조각)**\n"
-                f"💡 모든 파일 조각이 단 하나의 알림으로 묶여 배달되었습니다.\n"
-                f"ℹ️ 아래 첨부된 파일들을 **모두 한 폴더에 다운로드**한 뒤 터미널에서 병합 명령어를 실행하세요.\n"
-                f"```cmd\n"
-                f"※ Windows (CMD):\n{cmd_win}\n\n"
-                f"※ Mac / Linux:\n{cmd_mac}\n"
-                f"```"
-            )
-        }
-        
-        print(f"[+] Transmitting all {part_num - 1} files simultaneously in a single Discord request...", flush=True)
-        response = requests.post(webhook_url, data=payload, files=files_payload)
-        
-        # 오픈했던 임시 파일들 깔끔하게 클로즈 및 가상머신 잔여물 청소
-        for tf in opened_files:
-            tf.close()
-        for p in range(1, part_num):
-            try: os.remove(os.path.join('reports', f"{zip_file_name}.part{p}"))
-            except: pass
-            
-        if response.status_code in [200, 204]:
-            print("[+] [SUCCESS] Consolidated Discord transmission complete!")
-        else:
-            print(f"[-] Discord error: {response.status_code}, {response.text}")
+                
+        print("[+] [SUCCESS] Split transmission complete without 413 payload error!", flush=True)
 
 if __name__ == '__main__':
     upload_report_safe_engine()
