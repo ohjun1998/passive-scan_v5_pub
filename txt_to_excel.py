@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import os
 import glob
+import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 def build_advanced_excel_report():
-    print("[+] Initializing Ultra-Fast Excel Reporter Engine...")
+    print("[+] Initializing Ultra-Fast Regex Excel Reporter Engine...")
     
-    # 1. 마스터 타깃 목록 로드
     if not os.path.exists('targets.txt'):
         print("[-] Error: targets.txt missing.")
         return
@@ -16,14 +16,17 @@ def build_advanced_excel_report():
     with open('targets.txt', 'r') as f:
         targets = [line.strip() for line in f if line.strip()]
 
-    # 도메인별 데이터 구조화
+    # [★초고속 치트키 1★] 도메인 매칭을 C 라이브러리 정규식 엔진으로 통합 컴파일
+    # 글자 수가 긴 도메인이 먼저 매칭되도록 정렬 후 regex 빌드
+    targets = sorted(targets, key=len, reverse=True)
+    domain_pattern = re.compile('(' + '|'.join(map(re.escape, targets)) + ')')
+
     matrix_data = {domain: set() for domain in targets}
 
-    # 중복 파일 탐색 방지 (recursive=True 만으로 상하위 폴더 깔끔하게 수집)
     txt_files = set(glob.glob('results/**/*', recursive=True))
     txt_files = [f for f in txt_files if os.path.isfile(f)]
 
-    print(f"[+] Processing {len(txt_files)} data source files...")
+    print(f"[+] Scanning {len(txt_files)} decrypted data source files...")
     
     for file_path in txt_files:
         filename = os.path.basename(file_path).lower()
@@ -44,11 +47,11 @@ def build_advanced_excel_report():
                     if not url or url.startswith('#'):
                         continue
                     
-                    # URL 매핑 최적화
-                    for domain in targets:
-                        if domain in url:
-                            matrix_data[domain].add((url, source_tool))
-                            break
+                    # [★초고속 치트키 2★] 65번 돌던 파이썬 루프를 단 1번의 정규식 검색으로 단축
+                    match = domain_pattern.search(url)
+                    if match:
+                        matched_domain = match.group(1)
+                        matrix_data[matched_domain].add((url, source_tool))
         except Exception as e:
             print(f"[-] Error reading {filename}: {e}")
 
@@ -64,6 +67,7 @@ def build_advanced_excel_report():
 
     sheets_created = 0
 
+    print("[+] Injecting data into Excel sheets with real-time optimization...")
     for domain, dataset in matrix_data.items():
         if not dataset:
             continue
@@ -84,32 +88,25 @@ def build_advanced_excel_report():
 
         sorted_dataset = sorted(list(dataset), key=lambda x: (x[1], x[0]))
         
-        # [★초고속 최적화 핵심★] 실시간 글자 길이를 저장할 변수 초기화
         max_len_no = len("No")
         max_len_url = len("Target URL / Endpoint (수집된 자산 주소)")
         max_len_tool = len("Source Tool (발견 도구)")
         
         for idx, (url, tool) in enumerate(sorted_dataset, 1):
-            # 엑셀 시트당 최대 행 제한(1,048,576) 오버플로우 방지 안전장치
-            if idx > 1048500:
-                print(f"[!] Warning: {domain} data truncated due to Excel row limit.")
+            if idx > 1048500: # 엑셀 규격 한계 초과 방지
                 break
                 
             ws.append([idx, url, tool])
             current_row = ws.max_row
             ws.row_dimensions[current_row].height = 20
             
-            # 스타일 주입
             ws.cell(row=current_row, column=1).font = font_body
             ws.cell(row=current_row, column=1).alignment = align_center
-            
             ws.cell(row=current_row, column=2).font = font_body
             ws.cell(row=current_row, column=2).alignment = align_left
-            
             ws.cell(row=current_row, column=3).font = font_body
             ws.cell(row=current_row, column=3).alignment = align_center
 
-            # [★초고속 최적화 핵심★] 셀을 적으면서 동시에 최대 길이를 실시간 업데이트
             max_len_no = max(max_len_no, len(str(idx)))
             max_len_url = max(max_len_url, len(str(url)))
             max_len_tool = max(max_len_tool, len(str(tool)))
@@ -118,12 +115,10 @@ def build_advanced_excel_report():
         max_row = ws.max_row
         ws.auto_filter.ref = f"A1:C{max_row}"
 
-        # 루프를 다시 돌지 않고, 실시간 계측된 값으로 컬럼 너비 즉시 다이렉트 주입
         ws.column_dimensions['A'].width = max_len_no + 3
         ws.column_dimensions['B'].width = max(min(max_len_url + 3, 90), 10)
         ws.column_dimensions['C'].width = max_len_tool + 3
 
-    # 4. 저장
     if sheets_created > 0:
         wb.remove(default_sheet)
         os.makedirs('reports', exist_ok=True)
