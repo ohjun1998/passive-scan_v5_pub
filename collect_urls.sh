@@ -30,7 +30,7 @@ collect_master() {
         mkdir -p "$download_dir"
 
         # 주소 형태 강제 복원 및 정제 (최대 100개 라인 추출)
-        head -n 100 "results/${domain}_js_master_list.txt" | while read -r url; do
+        head -n 500 "results/${domain}_js_master_list.txt" | while read -r url; do
             if [[ "$url" =~ ^https?:// ]]; then echo "$url"
             elif [[ "$url" =~ ^// ]]; then echo "https:$url"
             elif [[ "$url" =~ ^/ ]]; then echo "https://$domain$url"
