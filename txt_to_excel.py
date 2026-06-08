@@ -76,6 +76,9 @@ def build_advanced_excel_report():
     align_left = Alignment(horizontal='left', vertical='center')
     align_right = Alignment(horizontal='right', vertical='center')
     
+    # [가독성 개선] 좁은 너비 칸에서 텍스트가 잘리지 않고 아래로 자동 줄바꿈되도록 셋업
+    align_left_wrap = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    
     thin_side = Side(border_style="thin", color="E0E0E0")
     thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
     double_bottom_side = Side(border_style="double", color="2F3542")
@@ -176,7 +179,12 @@ def build_advanced_excel_report():
                 cell.font = font_data
                 cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
-                cell.alignment = align_center if c != 4 else align_left 
+                
+                # 파일 경로와 URL 내역이 들어가는 열은 자동 줄바꿈 강제 연동
+                if c in [3, 4]:
+                    cell.alignment = align_left_wrap
+                else:
+                    cell.alignment = align_center
 
             # 하이 리스크 필터링 가동
             is_high_risk = False
@@ -198,7 +206,14 @@ def build_advanced_excel_report():
                     cell.font = font_data
                     cell.border = thin_border
                     if (high_risk_idx % 2) == 1: cell.fill = fill_zebra
-                    cell.alignment = align_left if c in [4, 5, 6] else align_center 
+                    
+                    # 하이 리스크 시트 역시 대용량 텍스트 열 줄바꿈 처리
+                    if c in [3, 5, 6]:
+                        cell.alignment = align_left_wrap
+                    elif c == 4:
+                        cell.alignment = align_left
+                    else:
+                        cell.alignment = align_center
                 high_risk_idx += 1
 
     # ==========================================
@@ -244,11 +259,11 @@ def build_advanced_excel_report():
             
             calculated_width = max(max_len + 4, 12)
             
-            # [요구사항 반영] 너무 길어지던 핵심 텍스트 컬럼의 가로폭 제한 락(Lock) 다운 조정
+            # 지정 너비 잠금 및 텍스트 짤림 자동 방지선 구축
             if header_value in ["High Risk URL / Endpoint", "Target URL / Endpoint"]:
-                sheet.column_dimensions[col_letter].width = 45  # 60에서 45로 줄여 가로 스크롤 방지
+                sheet.column_dimensions[col_letter].width = 45  
             elif header_value == "Found in JS File":
-                sheet.column_dimensions[col_letter].width = 20  # 30에서 20으로 조절하여 깔끔하게 세팅
+                sheet.column_dimensions[col_letter].width = 20  
             elif header_value == "Risk Reason":
                 sheet.column_dimensions[col_letter].width = 40  
             else:
