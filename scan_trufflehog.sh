@@ -17,11 +17,11 @@ scan_truffle() {
         
         trufflehog filesystem "$download_dir" --only-verified --json 2>/dev/null > "results/${domain}_trufflehog_raw.json" || true
         
-        # [기능 추가 핵심] TruffleHog JSON 메타데이터에서 탐지된 소스 파일명(basename)과 시크릿 내역을 탭(\t) 구조로 매핑
+        # [데이터 깨짐 방지 핵심] 비밀키 내부 줄바꿈 기호를 공백으로 강제 치환하여 줄바꿈 누수 현상 차단
         if [ -s "results/${domain}_trufflehog_raw.json" ]; then
-            cat "results/${domain}_trufflehog_raw.json" | jq -r '. | ((.SourceMetadata.Data.Filesystem.file // "unknown.js") | split("/") | last) + "\t[" + (.DetectorName // "Secret") + "] " + (.Raw // "")' > "results/${domain}_trufflehog.txt" || true
+            cat "results/${domain}_trufflehog_raw.json" | jq -r '. | ((.SourceMetadata.Data.Filesystem.file // "unknown.js") | split("/") | last) + "\t[" + (.DetectorName // "Secret") + "] " + ((.Raw // "") | gsub("\n"; " "))' > "results/${domain}_trufflehog.txt" || true
             rm -f "results/${domain}_trufflehog_raw.json"
-            echo "  -> [$domain] TruffleHog completed. Secrets mapped to source assets."
+            echo "  -> [$domain] TruffleHog completed. Secrets mapped to source assets cleanly."
         else
             echo "" > "results/${domain}_trufflehog.txt"
         fi
