@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import glob
-import re  # [에러 해결] 제어 문자 정제를 위한 정규식 모듈 추가
+import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -36,7 +36,7 @@ def build_advanced_excel_report():
                     url = line.strip()
                     if not url or url.startswith('#'): continue
                     
-                    # [에러 해결 핵심] openpyxl IllegalCharacterError 방지를 위한 XML 제어 문자 (\x00-\x1f 범위 등) 제거
+                    # openpyxl IllegalCharacterError 방지를 위한 XML 제어 문자 제거
                     url = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', url)
                     if not url: continue
                     
@@ -65,7 +65,7 @@ def build_advanced_excel_report():
     align_left = Alignment(horizontal='left', vertical='center')
     align_right = Alignment(horizontal='right', vertical='center')
     
-    # 깔끔한 격자 테두리선 설정
+    # 격자 테두리선 설정
     thin_side = Side(border_style="thin", color="E0E0E0")
     thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
     
@@ -90,10 +90,10 @@ def build_advanced_excel_report():
         cell.border = thin_border
 
     # ==========================================
-    # 4. High Risk Targets 시트 설계
+    # 4. High Risk Targets 시트 설계 (Source Tool 위치 변경)
     # ==========================================
     ws_high = wb.create_sheet(title="High Risk Targets")
-    high_headers = ["No", "Domain", "High Risk URL / Endpoint", "Source Tool", "Risk Reason"]
+    high_headers = ["No", "Source Tool", "Domain", "High Risk URL / Endpoint", "Risk Reason"] # Source Tool을 2번째로 이동
     ws_high.append(high_headers)
     ws_high.row_dimensions[1].height = 28
     
@@ -105,7 +105,7 @@ def build_advanced_excel_report():
         cell.border = thin_border
 
     high_risk_keywords = ['config', '.env', 'xml', 'json', 'secret', 'api/v', 'token', 'admin', 'password', 'key', 'credential', 'mysql']
-    dash_idx = high_risk_idx = 2  # 엑셀의 실제 행 인덱스 (헤더가 1번)
+    dash_idx = high_risk_idx = 2  
     sheets_created = 0
 
     # 데이터 채우기 루프
@@ -123,7 +123,7 @@ def build_advanced_excel_report():
         ws_dash.append([dash_idx - 1, domain, passive_url_count, jsluice_count, trufflehog_count])
         ws_dash.row_dimensions[dash_idx].height = 22
         
-        # 대시보드 셀 스타일링 기전 활성화
+        # 대시보드 셀 스타일링 및 하이퍼링크 구현
         for col_num in range(1, 6):
             cell = ws_dash.cell(row=dash_idx, column=col_num)
             cell.font = font_data
@@ -132,6 +132,10 @@ def build_advanced_excel_report():
             
             if col_num in [1, 2]:
                 cell.alignment = align_center if col_num == 1 else align_left
+                # [요구사항 반영] 데이터가 존재하는 도메인만 상세 시트로 바로가기 링크 생성
+                if col_num == 2 and url_map:
+                    cell.hyperlink = f"#'{domain[:30]}'!A1"
+                    cell.font = Font(name='Malgun Gothic', size=10, color='0056B3', underline='single') # 고급형 블루 링크 포맷
             else:
                 cell.alignment = align_right
                 cell.number_format = '#,##0'
@@ -140,10 +144,10 @@ def build_advanced_excel_report():
 
         if not url_map: continue
 
-        # 개별 도메인 탭 추가 및 정밀 내역 수립
+        # 개별 도메인 탭 추가 및 정밀 내역 수립 (Source Tool 위치 변경)
         ws = wb.create_sheet(title=domain[:30])
         sheets_created += 1
-        ws.append(["No", "Target URL / Endpoint", "Source Tool"])
+        ws.append(["No", "Source Tool", "Target URL / Endpoint"]) # Source Tool을 2번째로 이동
         ws.row_dimensions[1].height = 28
         for col_num in range(1, 4):
             cell = ws.cell(row=1, column=col_num)
@@ -155,7 +159,7 @@ def build_advanced_excel_report():
         for sub_idx, (url, tools) in enumerate(sorted(url_map.items()), 1):
             if sub_idx > 1048500: break
             tools_str = ", ".join(sorted(list(tools)))
-            ws.append([sub_idx, url, tools_str])
+            ws.append([sub_idx, tools_str, url]) # 데이터 삽입 순서 조정
             
             row_num = sub_idx + 1
             ws.row_dimensions[row_num].height = 20
@@ -164,7 +168,7 @@ def build_advanced_excel_report():
                 cell.font = font_data
                 cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
-                cell.alignment = align_center if c != 2 else align_left
+                cell.alignment = align_center if c != 3 else align_left # URL 열만 좌측 정렬
 
             # 하이 리스크 필터링 가동
             is_high_risk = False
@@ -179,14 +183,14 @@ def build_advanced_excel_report():
                     reason = f"민감 키워드 파라미터 감지 ({', '.join(matched_keys)})"
                     
             if is_high_risk:
-                ws_high.append([high_risk_idx - 1, domain, url, tools_str, reason])
+                ws_high.append([high_risk_idx - 1, tools_str, domain, url, reason]) # 데이터 삽입 순서 조정
                 ws_high.row_dimensions[high_risk_idx].height = 22
                 for c in range(1, 6):
                     cell = ws_high.cell(row=high_risk_idx, column=c)
                     cell.font = font_data
                     cell.border = thin_border
                     if (high_risk_idx % 2) == 1: cell.fill = fill_zebra
-                    cell.alignment = align_left if c in [2, 3, 5] else align_center
+                    cell.alignment = align_left if c in [3, 4, 5] else align_center # 가독성에 최적화된 맞춤 정렬
                 high_risk_idx += 1
 
     # ==========================================
@@ -229,7 +233,7 @@ def build_advanced_excel_report():
 
     # 지정 수치 보정 고정폭 세팅 (가독성 확보)
     ws_dash.column_dimensions['A'].width = 10
-    ws_dash.column_dimensions['B'].width = 32
+    ws_dash.column_dimensions['B'].width = 35
     ws_dash.column_dimensions['C'].width = 26
     ws_dash.column_dimensions['D'].width = 22
     ws_dash.column_dimensions['E'].width = 22
