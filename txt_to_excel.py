@@ -14,6 +14,19 @@ def build_advanced_excel_report():
     with open('targets.txt', 'r') as f:
         targets = [line.strip() for line in f if line.strip()]
 
+    # 💡 [원래 모양 복원 핵심] 1단계에서 전달된 파일명 -> 원본 URL 매핑 테이블 사전 로드
+    js_url_converter = {}
+    mapping_files = glob.glob('results/*_js_mapping.txt')
+    for mf in mapping_files:
+        try:
+            with open(mf, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if '\t' in line:
+                        safe_fname, original_url = line.strip().split('\t', 1)
+                        js_url_converter[safe_fname] = original_url
+        except Exception as e:
+            print(f"[-] Warning: Failed to read mapping file {mf}: {e}", flush=True)
+
     # 다차원 데이터 매트릭스 선언
     matrix_data = {domain: {} for domain in targets}
     txt_files = glob.glob('results/**/*.*', recursive=True) + glob.glob('results/*.*')
@@ -49,6 +62,10 @@ def build_advanced_excel_report():
                         url = parts[1]
                     else:
                         url = line_str
+                    
+                    # 💡 [원래 모양 복원 핵심] 언더바 파일명을 원본의 예쁜 URL 주소 형태로 강제 복구
+                    if js_file in js_url_converter:
+                        js_file = js_url_converter[js_file]
                     
                     for domain in targets:
                         if domain in url or domain in filename:
@@ -158,7 +175,7 @@ def build_advanced_excel_report():
         sheets_created += 1
         ws.append(["No", "Source Tool", "Found in JS File", "Target URL / Endpoint"]) 
         ws.row_dimensions[1].height = 28
-        for col_num in range(1, 5):
+        for col_num in range(1, 4):
             cell = ws.cell(row=1, column=col_num)
             cell.font = font_header
             cell.fill = fill_header
@@ -172,14 +189,13 @@ def build_advanced_excel_report():
             ws.append([sub_idx, tools_str, files_str, url]) 
             
             row_num = sub_idx + 1
-            # 💡 [요구사항 반영] row_dimensions 높이 지정을 해제하여 텍스트 유실을 완벽 차단
+            # 💡 [요구사항 반영] 줄바꿈 없이 부족하면 깔끔하게 한 줄로 잘려보이게 세팅
             for c in range(1, 5):
                 cell = ws.cell(row=row_num, column=c)
                 cell.font = font_data
                 cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
                 
-                # 💡 [요구사항 반영] 줄바꿈 설정을 지우고 일반 좌측 정렬 매핑하여 일직선 유도
                 if c in [3, 4]:
                     cell.alignment = align_left
                 else:
@@ -205,7 +221,6 @@ def build_advanced_excel_report():
                     cell.border = thin_border
                     if (high_risk_idx % 2) == 1: cell.fill = fill_zebra
                     
-                    # 💡 하이 리스크 시트 역시 한 줄 슬라이스로 깔끔하게 표기
                     if c in [3, 4, 5, 6]:
                         cell.alignment = align_left
                     else:
@@ -255,11 +270,11 @@ def build_advanced_excel_report():
             
             calculated_width = max(max_len + 4, 12)
             
-            # 💡 [요구사항 반영] 폭을 넉넉하게 확장하여 일렬 짤림 가독성을 확보합니다.
+            # 💡 [요구사항 반영] 한 줄 슬라이스로 잘려 보이기 좋게 대폭 고정폭 확장
             if header_value in ["High Risk URL / Endpoint", "Target URL / Endpoint"]:
-                sheet.column_dimensions[col_letter].width = 80  # 45에서 80으로 시원하게 확장
+                sheet.column_dimensions[col_letter].width = 80  
             elif header_value == "Found in JS File":
-                sheet.column_dimensions[col_letter].width = 40  # 20에서 40으로 시원하게 확장
+                sheet.column_dimensions[col_letter].width = 50  # 원래 예쁜 URL 주소 표기를 위해 50 설정
             elif header_value == "Risk Reason":
                 sheet.column_dimensions[col_letter].width = 40  
             else:
