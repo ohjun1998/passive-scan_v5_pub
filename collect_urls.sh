@@ -62,9 +62,8 @@ collect_master() {
             ((current++))
             local safe_name=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-150).js
             
-            # 💡 [초고속 최적화 및 보안] connect-timeout(3초) 및 max-time(5초) 단축으로 죽은 링크를 빠르게 스킵합니다.
-            # 💡 각 줄마다 [도메인명]을 함께 출력하여 병렬 실행 시에도 로그가 섞이지 않고 추적 가능합니다.
-            if curl -s -L --connect-timeout 3 --max-time 5 --fail \
+            # 💡 [1초 초고속 끊기 핵심] --connect-timeout 1 설정을 이식하여 죽은 서버 연결 시 1초 이내로 즉시 강제 단절합니다.
+            if curl -s -L --connect-timeout 1 --max-time 4 --fail \
                  -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
                  "$url" -o "$download_dir/$safe_name"; then
                 echo "    [✓] [${domain}] (${current}/${total_download}) Download Success"
