@@ -24,7 +24,7 @@ collect_master() {
     local total_js=$(wc -l < "results/${domain}_js_master_list.txt")
     echo "  -> [$domain] Successfully indexed $total_js unique JS targets."
 
-    # 3. [최적화 핵심] 타겟 서버 차단 방지를 위한 선행 다운로드 (최대 1500개 제한 보존)
+    # 3. [최적화 핵심] 타겟 서버 차단 방지를 위한 선행 다운로드 (최대 2000개 제한으로 확장)
     if [ "$total_js" -gt 0 ]; then
         local download_dir="results/${domain}_js_files"
         mkdir -p "$download_dir"
@@ -32,8 +32,8 @@ collect_master() {
         # [원래 모양 복원 핵심] 매핑 기록 파일 초기화
         rm -f "results/${domain}_js_mapping.txt"
 
-        # 주소 형태 강제 복원 및 정제 (최대 1500개 라인 추출)
-        head -n 1500 "results/${domain}_js_master_list.txt" | while read -r url; do
+        # 주소 형태 강제 복원 및 정제 (최대 2000개 라인 추출)
+        head -n 2000 "results/${domain}_js_master_list.txt" | while read -r url; do
             if [[ "$url" =~ ^https?:// ]]; then echo "$url"
             elif [[ "$url" =~ ^// ]]; then echo "https:$url"
             elif [[ "$url" =~ ^/ ]]; then echo "https://$domain$url"
@@ -62,7 +62,7 @@ collect_master() {
             ((current++))
             local safe_name=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-150).js
             
-            # 💡 [1초 초고속 끊기 핵심] --connect-timeout 1 설정을 이식하여 죽은 서버 연결 시 1초 이내로 즉시 강제 단절합니다.
+            # 스텔스 유지 보안 규칙: 외부 노출을 막기 위해 로그에서 원본 $url을 완전히 제외하고 성공 유무만 사출
             if curl -s -L --connect-timeout 1 --max-time 4 --fail \
                  -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
                  "$url" -o "$download_dir/$safe_name"; then
