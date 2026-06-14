@@ -103,7 +103,7 @@ jobs:
         retention-days: 1
 
   # ==========================================
-  # [Job 3] Httpx 스텔스 타격대 (20대 풀가동)
+  # [Job 3] Httpx 스텔스 타격대 (20대 풀가동) - 검증 완료 표준 명세 반영
   # ==========================================
   httpx-strike:
     runs-on: ubuntu-latest
@@ -137,7 +137,8 @@ jobs:
       run: |
         mkdir -p httpx_out
         if [ -s chunks/chunk_${{ matrix.group }}.txt ]; then
-          httpx -l chunks/chunk_${{ matrix.group }}.txt -sc -random-agent -rl 20 -c 10 -timeout 4 -retries 1 -json -o httpx_out/httpx_results_${{ matrix.group }}.json -silent
+          # 💡 오류가 나던 -c 옵션을 허용 표준 규격인 -t 옵션으로 안전하게 수정 완료
+          httpx -l chunks/chunk_${{ matrix.group }}.txt -sc -random-agent -rl 20 -t 10 -timeout 4 -retries 1 -json -o httpx_out/httpx_results_${{ matrix.group }}.json -silent
         else
           touch httpx_out/httpx_results_${{ matrix.group }}.json
         fi
