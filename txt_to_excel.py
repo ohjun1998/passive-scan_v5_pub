@@ -20,18 +20,22 @@ def make_absolute(url, domain):
 
 def get_status_color(status):
     status_str = str(status)
-    if status_str.startswith('2'): return '28A745' # Green
-    if status_str.startswith('3'): return '17A2B8' # Blue
-    if status_str.startswith('4'): return 'FD7E14' # Orange
-    if status_str.startswith('5'): return 'DC3545' # Red
-    if 'Static' in status_str: return 'A8B8D0'     # Gray-Blue
-    return '6C757D' # Gray (Dead)
+    if status_str.startswith('2'): return '28A745'
+    if status_str.startswith('3'): return '17A2B8'
+    if status_str.startswith('4'): return 'FD7E14'
+    if status_str.startswith('5'): return 'DC3545'
+    if 'Static' in status_str: return 'A8B8D0'
+    return '6C757D'
+
+def get_safe_domain(target):
+    return "wild_" + target[2:] if target.startswith('*.') else target
 
 def build_advanced_excel_report():
-    print("[+] Loading Fast-Track Excel Compiler...", flush=True)
+    print("[+] 고품질 엑셀 대시보드 사출 엔진 가동 중...", flush=True)
     if not os.path.exists('targets.txt'): return
     with open('targets.txt', 'r') as f: targets = [line.strip() for line in f if line.strip()]
 
+    target_map = {get_safe_domain(t): t for t in targets}
     js_url_converter = {}
     for mf in glob.glob('results/*_js_mapping.txt'):
         try:
@@ -42,16 +46,19 @@ def build_advanced_excel_report():
                         js_url_converter[s] = o
         except: pass
 
-    matrix_data = {domain: {} for domain in targets}
+    matrix_data = {raw_target: {} for raw_target in targets}
     
-    # 원천 데이터 파싱 (1, 2단계 결과물)
     for file_path in glob.glob('results/*.*'):
         filename = os.path.basename(file_path).lower()
         match = re.match(r'^(.*)_(linkfinder|trufflehog|gau|waybackurls)\.txt$', filename)
         if not match: continue
         
-        current_domain = match.group(1)
-        if current_domain not in targets: continue
+        safe_domain = match.group(1)
+        if safe_domain not in target_map: continue
+        
+        raw_target = target_map[safe_domain]
+        is_wildcard = raw_target.startswith('*.')
+        base_domain = raw_target[2:] if is_wildcard else raw_target
 
         if 'linkfinder' in filename or 'jsluice' in filename: source_tool = 'LinkFinder'
         elif 'trufflehog' in filename: source_tool = 'TruffleHog'
@@ -72,18 +79,23 @@ def build_advanced_excel_report():
                     
                     if js_file in js_url_converter: js_file = js_url_converter[js_file]
                     
-                    abs_url = make_absolute(raw_url, current_domain)
+                    abs_url = make_absolute(raw_url, base_domain)
                     parsed_netloc = urlparse(abs_url).netloc.split(':')[0]
-                    if parsed_netloc != current_domain: continue 
+                    
+                    if is_wildcard:
+                        if not (parsed_netloc == base_domain or parsed_netloc.endswith('.' + base_domain)):
+                            continue
+                    else:
+                        if parsed_netloc != base_domain:
+                            continue
 
-                    if abs_url not in matrix_data[current_domain]:
-                        matrix_data[current_domain][abs_url] = {"tools": set(), "files": set()}
-                    matrix_data[current_domain][abs_url]["tools"].add(source_tool)
+                    if abs_url not in matrix_data[raw_target]:
+                        matrix_data[raw_target][abs_url] = {"tools": set(), "files": set()}
+                    matrix_data[raw_target][abs_url]["tools"].add(source_tool)
                     if source_tool in ['LinkFinder', 'TruffleHog']:
-                        matrix_data[current_domain][abs_url]["files"].add(js_file)
+                        matrix_data[raw_target][abs_url]["files"].add(js_file)
         except: pass
 
-    # 💡 20대의 Httpx 분산 타격 노드가 회수해온 분산 상태 코드 취합 연동
     status_codes = {}
     for res_file in glob.glob('results/httpx_results_*.json'):
         try:
@@ -95,9 +107,6 @@ def build_advanced_excel_report():
 
     junk_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
 
-    # ==========================================
-    # 엑셀 시트 렌더링 파트
-    # ==========================================
     wb = Workbook()
     font_header, fill_header = Font(name='Malgun Gothic', bold=True, color='FFFFFF'), PatternFill(start_color='2F3542', end_color='2F3542', fill_type='solid')
     font_data, fill_zebra = Font(name='Malgun Gothic', size=10, color='333333'), PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')
@@ -106,23 +115,24 @@ def build_advanced_excel_report():
 
     ws_dash = wb.active
     ws_dash.title = "Summary Dashboard"
-    ws_dash.append(["No", "Target Domain", "Total URLs", "jsluice 추출 개수", "TruffleHog 탐지 개수"])
+    ws_dash.append(["No", "타겟 도메인", "총 발견 URL 수", "jsluice 추출 개수", "TruffleHog 탐지 개수"])
     for c in range(1, 6): ws_dash.cell(1, c).font = font_header; ws_dash.cell(1, c).fill = fill_header; ws_dash.cell(1, c).alignment = align_center; ws_dash.cell(1, c).border = thin_border
 
     ws_high = wb.create_sheet(title="High Risk Targets")
-    ws_high.append(["No", "Source Tool", "Found in JS File", "Status", "Domain", "High Risk URL / Endpoint", "Risk Reason"]) 
+    ws_high.append(["No", "소스 출처", "발견된 JS 파일명", "응답 상태", "도메인", "고위험 경로 (Endpoint)", "탐지 사유"]) 
     for c in range(1, 8): ws_high.cell(1, c).font = font_header; ws_high.cell(1, c).fill = fill_header; ws_high.cell(1, c).alignment = align_center; ws_high.cell(1, c).border = thin_border
 
     high_risk_keywords = ['config', '.env', 'xml', 'json', 'secret', 'api/v', 'token', 'admin', 'password', 'key', 'credential', 'mysql']
     dash_idx, high_risk_idx = 2, 2  
 
-    for domain, url_map in matrix_data.items():
-        sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', domain)[:30]
+    for raw_target, url_map in matrix_data.items():
+        # 시트 이름에 * 와 같은 특수기호가 들어가면 엑셀 에러가 발생하므로 _ 로 치환
+        sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', raw_target)[:30]
         passive_count = sum(1 for data in url_map.values() if 'Waybackurls' in data["tools"] or 'GAU' in data["tools"])
         jsluice_count = sum(1 for data in url_map.values() if 'LinkFinder' in data["tools"])
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
         
-        ws_dash.append([dash_idx - 1, escape_formula(domain), passive_count, jsluice_count, trufflehog_count])
+        ws_dash.append([dash_idx - 1, escape_formula(raw_target), passive_count, jsluice_count, trufflehog_count])
         for c in range(1, 6):
             ws_dash.cell(dash_idx, c).font = font_data; ws_dash.cell(dash_idx, c).border = thin_border
             ws_dash.cell(dash_idx, c).alignment = align_left if c == 2 else align_center
@@ -132,7 +142,7 @@ def build_advanced_excel_report():
         if not url_map: continue
 
         ws = wb.create_sheet(title=sheet_title)
-        ws.append(["No", "Source Tool", "Found in JS File", "Status", "Target Absolute URL"]) 
+        ws.append(["No", "소스 출처", "발견된 JS 파일명", "응답 상태", "타겟 절대 경로 (URL)"]) 
         for c in range(1, 6): ws.cell(1, c).font = font_header; ws.cell(1, c).fill = fill_header; ws.cell(1, c).alignment = align_center; ws.cell(1, c).border = thin_border
 
         for sub_idx, (url, data) in enumerate(sorted(url_map.items()), 1):
@@ -158,15 +168,14 @@ def build_advanced_excel_report():
                 elif c in [3, 5]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
-            # 위협 탐지 필터링
             is_high_risk, reason = False, ""
-            if 'TruffleHog' in data["tools"]: is_high_risk, reason = True, "TruffleHog 검증 완료 민감 키(Secret) 유출 징후"
+            if 'TruffleHog' in data["tools"]: is_high_risk, reason = True, "TruffleHog 검증 완료: 민감 키(Secret) 유출 징후 탐지"
             else:
                 matched = [key for key in high_risk_keywords if key in url.lower()]
                 if matched: is_high_risk, reason = True, f"민감 키워드 감지 ({', '.join(matched)})"
                     
             if is_high_risk:
-                ws_high.append([high_risk_idx - 1, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(domain), escape_formula(url), escape_formula(reason)]) 
+                ws_high.append([high_risk_idx - 1, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(raw_target), escape_formula(url), escape_formula(reason)]) 
                 for c in range(1, 8):
                     cell = ws_high.cell(high_risk_idx, c)
                     cell.font = font_data; cell.border = thin_border
@@ -178,21 +187,20 @@ def build_advanced_excel_report():
                     else: cell.alignment = align_center
                 high_risk_idx += 1
 
-    # 가독성 자동 마진 정돈
     for sheet in wb.worksheets:
         for col_idx, col in enumerate(sheet.columns, 1):
             col_letter = get_column_letter(col_idx)
             header = str(sheet.cell(1, col_idx).value)
-            if header in ["Target Absolute URL", "High Risk URL / Endpoint"]: sheet.column_dimensions[col_letter].width = 80  
-            elif header == "Found in JS File": sheet.column_dimensions[col_letter].width = 50  
-            elif header == "Risk Reason": sheet.column_dimensions[col_letter].width = 40  
-            elif header == "Status": sheet.column_dimensions[col_letter].width = 14
+            if header in ["타겟 절대 경로 (URL)", "고위험 경로 (Endpoint)"]: sheet.column_dimensions[col_letter].width = 80  
+            elif header == "발견된 JS 파일명": sheet.column_dimensions[col_letter].width = 50  
+            elif header == "탐지 사유": sheet.column_dimensions[col_letter].width = 40  
+            elif header == "응답 상태": sheet.column_dimensions[col_letter].width = 14
             else: sheet.column_dimensions[col_letter].width = 18
 
     ws_dash.column_dimensions['B'].width = 35
     os.makedirs('reports', exist_ok=True)
     wb.save('reports/passive_recon_report_v1.xlsx')
-    print("[+] Master Excel Build Complete!")
+    print("[+] 모든 엑셀 보고서 렌더링이 성공적으로 완료되었습니다!", flush=True)
 
 if __name__ == '__main__':
     build_advanced_excel_report()
