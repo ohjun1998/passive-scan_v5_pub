@@ -19,7 +19,14 @@ def upload_report_safe_engine():
     latest_file = max(files, key=os.path.getmtime)
     file_name = os.path.basename(latest_file)
     
-    # [개수 오류 동적 해결]
+    # 💡 [핵심 추가] 엑셀 엔진이 계산해둔 전체 신규 URL 개수 스캔
+    total_new_count = "0"
+    if os.path.exists('reports/new_count.txt'):
+        try:
+            with open('reports/new_count.txt', 'r') as f:
+                total_new_count = f.read().strip()
+        except: pass
+
     try:
         wb = load_workbook(latest_file, read_only=True)
         total_sheets = len(wb.sheetnames)
@@ -28,14 +35,14 @@ def upload_report_safe_engine():
         print(f"[-] Warning: Failed to parse excel sheet count: {e}")
         active_domains_count = "정상"
 
-    # 💡 ZIP 압축을 완전히 제거하고 순정 .xlsx 파일로 다이렉트 전송
     print(f"[+] Transmitting pure EXCEL workbook ({file_name}) to Discord...", flush=True)
     with open(latest_file, 'rb') as f:
         payload = {
             'content': (
                 f"🚀 **[정찰 완료 - 통합 마스터 엑셀 보고서]**\n"
+                f"🔥 **새로 발견된 엔드포인트:** `{total_new_count}개`의 신규 URL이 추가되었습니다!\n"
                 f"🔒 수집 데이터가 존재하는 **{active_domains_count}개 도메인**이 개별 탭(시트)으로 완벽히 매핑되어 병합되었습니다.\n"
-                f"📊 아래 엑셀 파일을 터치하여 즉시 상세 엔드포인트를 확인해 보세요!"
+                f"📊 아래 엑셀 파일을 터치하여 즉시 상세 엔드포인트를 확인해 보세요."
             )
         }
         # 엑셀 전용 MIME 타입 지정
