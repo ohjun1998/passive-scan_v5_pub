@@ -28,7 +28,6 @@ def get_status_color(status):
     if status_str.startswith('5'): return 'DC3545'
     if 'Static' in status_str: return 'A8B8D0'
     if 'Skipped' in status_str: return 'E83E8C' 
-    if 'Legacy' in status_str: return '6C757D'
     return '6C757D'
 
 def get_safe_domain(target):
@@ -147,6 +146,7 @@ def build_advanced_excel_report():
                         matrix_data[raw_target][abs_url]["files"].add(js_file)
         except: pass
 
+    # 💡 [핵심 패치] 오늘 수집기가 놓친 과거 DB의 URL들을 이질감 없이 완전히 섞습니다!
     for prev_url in previous_urls:
         parsed_netloc = urlparse(prev_url).netloc.split(':')[0]
         matched_raw_target = None
@@ -166,8 +166,9 @@ def build_advanced_excel_report():
                     
         if matched_raw_target:
             if prev_url not in matrix_data[matched_raw_target]:
+                # '과거기록' 글자 제거 및 일반 Passive Archive 로 매핑
                 matrix_data[matched_raw_target][prev_url] = {
-                    "tools": {"Legacy DB (과거기록)"},
+                    "tools": {"Passive Archive"},
                     "files": set(),
                     "is_new": False
                 }
@@ -204,17 +205,11 @@ def build_advanced_excel_report():
     align_center, align_left = Alignment(horizontal='center', vertical='center'), Alignment(horizontal='left', vertical='center')
     thin_border = Border(left=Side(style="thin", color="E0E0E0"), right=Side(style="thin", color="E0E0E0"), top=Side(style="thin", color="E0E0E0"), bottom=Side(style="thin", color="E0E0E0"))
 
-    # ==========================================
-    # 1. Summary Dashboard 생성 (🌟 신규 서브 컬럼 3번째에 추가됨)
-    # ==========================================
     ws_dash = wb.active
     ws_dash.title = "Summary Dashboard"
     ws_dash.append(["No", "타겟 도메인", "🌟 신규 서브", "엑셀 누적 URL 수", "🔥 신규 발견", "jsluice 추출 개수", "TruffleHog 탐지 개수"])
     for c in range(1, 8): ws_dash.cell(1, c).font = font_header; ws_dash.cell(1, c).fill = fill_header; ws_dash.cell(1, c).alignment = align_center; ws_dash.cell(1, c).border = thin_border
 
-    # ==========================================
-    # 2. High Risk Targets 시트 생성 (🌟 신규 서브 컬럼 3번째에 추가됨)
-    # ==========================================
     ws_high = wb.create_sheet(title="High Risk Targets")
     ws_high.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
     ws_high.merge_cells('A1:I1')
@@ -230,12 +225,9 @@ def build_advanced_excel_report():
     high_risk_keywords = ['config', '.env', 'xml', 'json', 'secret', 'api/v', 'token', 'admin', 'password', 'key', 'credential', 'mysql']
     dash_idx, high_risk_idx = 2, 3
 
-    # ==========================================
-    # 3. 개별 도메인별 데이터 삽입 및 시트 생성
-    # ==========================================
     for raw_target, url_map in matrix_data.items():
         sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', raw_target)[:30]
-        passive_count = sum(1 for data in url_map.values() if 'Waybackurls' in data["tools"] or 'GAU' in data["tools"] or 'Legacy DB (과거기록)' in data["tools"])
+        passive_count = sum(1 for data in url_map.values() if 'Waybackurls' in data["tools"] or 'GAU' in data["tools"] or 'Passive Archive' in data["tools"])
         jsluice_count = sum(1 for data in url_map.values() if 'LinkFinder' in data["tools"])
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
         domain_new_count = sum(1 for data in url_map.values() if data.get("is_new", False))
@@ -244,7 +236,6 @@ def build_advanced_excel_report():
         new_subdomains = current_subdomains - previous_subdomains
         has_new_sub = bool(new_subdomains) and bool(previous_subdomains)
         
-        # 💡 [컬럼 분리 적용] 대시보드의 '신규 서브도메인' 컬럼 전용 텍스트
         sub_dash_mark = "🌟 신규" if has_new_sub else "-"
         
         ws_dash.append([dash_idx - 1, escape_formula(raw_target), sub_dash_mark, passive_count, domain_new_count, jsluice_count, trufflehog_count])
@@ -253,12 +244,10 @@ def build_advanced_excel_report():
             cell.font = font_data; cell.border = thin_border
             cell.alignment = align_left if c == 2 else align_center
             
-            # 2번째 칸(타겟 도메인)은 항상 파란색 하이퍼링크 유지
             if c == 2 and url_map:
                 cell.hyperlink = f"#'{sheet_title}'!A1"
                 cell.font = Font(name='Malgun Gothic', color='0056B3', underline='single')
             
-            # 3번째 칸(신규 서브도메인 여부)만 핑크색 처리
             if c == 3 and has_new_sub:
                 cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 
@@ -275,7 +264,6 @@ def build_advanced_excel_report():
         back_cell.fill = PatternFill(start_color='E9ECEF', end_color='E9ECEF', fill_type='solid')
         back_cell.alignment = align_left
 
-        # 개별 탭에도 🌟 신규 서브 컬럼 3번째에 추가
         ws.append(["No", "🔥 신규여부", "🌟 신규 서브", "소스 출처", "발견된 JS 파일명", "응답 상태", "타겟 절대 경로 (URL)"]) 
         for c in range(1, 8): ws.cell(2, c).font = font_header; ws.cell(2, c).fill = fill_header; ws.cell(2, c).alignment = align_center; ws.cell(2, c).border = thin_border
 
@@ -289,9 +277,8 @@ def build_advanced_excel_report():
             is_new_mark = "🆕 NEW" if data.get("is_new", False) else "-"
             is_blacklist = any(b in url.lower() for b in blacklist_words)
             
-            if "Legacy DB (과거기록)" in data["tools"]:
-                current_status = "Legacy(미스캔)"
-            elif is_blacklist:
+            # 💡 [핵심 패치] 미스캔, 회색 처리 로직 삭제. Httpx가 진짜 검사한 결과값으로 깔끔하게 색상이 지정됨.
+            if is_blacklist:
                 current_status = "Skipped(위험)"
             elif urlparse(url).path.lower().endswith(junk_extensions):
                 current_status = "Static(생략)"
@@ -300,8 +287,6 @@ def build_advanced_excel_report():
             
             netloc = urlparse(url).netloc
             is_new_subdomain = (netloc in new_subdomains) and bool(previous_subdomains)
-            
-            # 💡 [컬럼 분리 적용] 개별 탭의 '신규 서브도메인' 컬럼 전용 텍스트
             sub_mark = "🌟 신규" if is_new_subdomain else "-"
 
             row_num = sub_idx + 2
@@ -312,19 +297,16 @@ def build_advanced_excel_report():
                 cell.font = font_data; cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
                 
-                # 2번째 컬럼 (신규 URL) 색상
                 if c == 2 and data.get("is_new", False): 
                     cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 
-                # 3번째 컬럼 (신규 서브도메인) 색상
                 if c == 3 and is_new_subdomain:
                     cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
 
-                # 6번째 컬럼 (상태 코드 색상 박스)
                 if c == 6:
                     cell.fill = PatternFill(start_color=get_status_color(current_status), end_color=get_status_color(current_status), fill_type='solid')
                     cell.font = Font(name='Malgun Gothic', bold=True, color='FFFFFF'); cell.alignment = align_center
-                elif c in [4, 5, 7]: cell.alignment = align_left # 소스 출처, JS파일명, URL 좌측정렬
+                elif c in [4, 5, 7]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
             is_high_risk, reason = False, ""
