@@ -4,6 +4,7 @@ import glob
 import re
 import json
 import posixpath
+from datetime import datetime
 from urllib.parse import urlparse, parse_qsl
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -54,7 +55,6 @@ def build_advanced_excel_report():
                         js_url_converter[s] = o
         except: pass
 
-    # 💡 무거운 엑셀 대신 가벼운 텍스트 DB(master_url_db.txt)를 읽어옵니다.
     previous_urls = set()
     prev_db_path = 'previous_report/master_url_db.txt'
     
@@ -70,6 +70,13 @@ def build_advanced_excel_report():
             print(f"[-] 텍스트 DB 파싱 실패 (모두 신규로 처리): {e}")
     else:
         print("[!] 이전 텍스트 DB가 없습니다. (최초 실행 - 모든 URL이 '신규'로 처리됩니다)")
+
+    # 💡 [서브도메인 추출] 과거에 본 적 있는 서브도메인(Netloc) 세트 생성
+    previous_subdomains = set()
+    for u in previous_urls:
+        try:
+            previous_subdomains.add(urlparse(u).netloc)
+        except: pass
 
     matrix_data = {raw_target: {} for raw_target in targets}
     signature_counts = {}
@@ -132,7 +139,6 @@ def build_advanced_excel_report():
                             continue 
                         signature_counts[signature] = signature_counts.get(signature, 0) + 1
                         
-                        # 과거 텍스트 DB(previous_urls)에 없으면 신규 태그 부착
                         is_new = abs_url not in previous_urls
                         matrix_data[raw_target][abs_url] = {"tools": set(), "files": set(), "is_new": is_new}
                         
@@ -141,22 +147,19 @@ def build_advanced_excel_report():
                         matrix_data[raw_target][abs_url]["files"].add(js_file)
         except: pass
 
-    # reports 폴더 생성
     os.makedirs('reports', exist_ok=True)
 
-    # 💡 [핵심 버그 패치] 과거의 URL과 오늘 찾은 URL을 합쳐서 영구히 누적(Accumulate)합니다.
-    all_cumulative_urls = set(previous_urls) # 1. 메모리에 있던 과거 데이터를 몽땅 붓는다.
+    all_cumulative_urls = set(previous_urls) 
     
     for url_map in matrix_data.values():
         for url in url_map.keys():
-            all_cumulative_urls.add(url)     # 2. 오늘 찾은 데이터를 추가한다. (Set이므로 중복은 자동 제거됨)
+            all_cumulative_urls.add(url)     
             
     with open('reports/master_url_db.txt', 'w', encoding='utf-8') as f:
         for u in sorted(all_cumulative_urls):
             f.write(u + '\n')
     print(f"[+] 텍스트 DB 영구 누적 백업 완료 (총 {len(all_cumulative_urls)}개 기록됨)")
 
-    # 디스코드 알림을 위한 전체 신규 발견 URL 총합 계산 및 저장
     total_new_found = sum(1 for url_map in matrix_data.values() for data in url_map.values() if data["is_new"])
     with open('reports/new_count.txt', 'w') as f:
         f.write(str(total_new_found))
@@ -203,11 +206,27 @@ def build_advanced_excel_report():
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
         domain_new_count = sum(1 for data in url_map.values() if data["is_new"])
         
-        ws_dash.append([dash_idx - 1, escape_formula(raw_target), passive_count, domain_new_count, jsluice_count, trufflehog_count])
+        # 💡 [신규 서브도메인 감지 로직]
+        current_subdomains = {urlparse(u).netloc for u in url_map.keys()}
+        new_subdomains = current_subdomains - previous_subdomains
+        
+        # 이전 DB가 비어있는 최초 실행 시에는 모두 신규 서브도메인이므로 알림을 생략합니다.
+        has_new_sub = bool(new_subdomains) and bool(previous_subdomains)
+        target_display = raw_target
+        if has_new_sub:
+            target_display += " 🌟[신규 서브도메인]"
+        
+        ws_dash.append([dash_idx - 1, escape_formula(target_display), passive_count, domain_new_count, jsluice_count, trufflehog_count])
         for c in range(1, 7):
             ws_dash.cell(dash_idx, c).font = font_data; ws_dash.cell(dash_idx, c).border = thin_border
             ws_dash.cell(dash_idx, c).alignment = align_left if c == 2 else align_center
-            if c == 2 and url_map: ws_dash.cell(dash_idx, c).hyperlink = f"#'{sheet_title}'!A1"; ws_dash.cell(dash_idx, c).font = Font(name='Malgun Gothic', color='0056B3', underline='single')
+            if c == 2 and url_map:
+                ws_dash.cell(dash_idx, c).hyperlink = f"#'{sheet_title}'!A1"
+                # 신규 서브도메인이 있으면 핑크색+굵게 표시, 없으면 기존 파란색 표시
+                if has_new_sub:
+                    ws_dash.cell(dash_idx, c).font = Font(name='Malgun Gothic', bold=True, color='E83E8C', underline='single') 
+                else:
+                    ws_dash.cell(dash_idx, c).font = Font(name='Malgun Gothic', color='0056B3', underline='single')
         dash_idx += 1
 
         if not url_map: continue
@@ -241,6 +260,10 @@ def build_advanced_excel_report():
             else:
                 current_status = status_codes.get(url, 'Dead')
             
+            # 개별 시트 내에서 신규 서브도메인 URL 색상 하이라이트 처리
+            netloc = urlparse(url).netloc
+            is_new_subdomain = (netloc in new_subdomains) and bool(previous_subdomains)
+
             row_num = sub_idx + 2
             ws.append([sub_idx, is_new_mark, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(url)]) 
             
@@ -248,8 +271,14 @@ def build_advanced_excel_report():
                 cell = ws.cell(row_num, c)
                 cell.font = font_data; cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
-                if c == 2 and data["is_new"]: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 
+                if c == 2 and data["is_new"]: 
+                    cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                
+                # 타겟 절대경로(URL) 컬럼(6번째)에서 신규 서브도메인인 경우 핑크색 굵게 표시
+                if c == 6 and is_new_subdomain:
+                    cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+
                 if c == 5:
                     cell.fill = PatternFill(start_color=get_status_color(current_status), end_color=get_status_color(current_status), fill_type='solid')
                     cell.font = Font(name='Malgun Gothic', bold=True, color='FFFFFF'); cell.alignment = align_center
@@ -303,8 +332,12 @@ def build_advanced_excel_report():
 
     ws_dash.column_dimensions['B'].width = 35
     wb.active = 0 
-    wb.save('reports/passive_recon_report_v1.xlsx')
-    print("[+] 텍스트 DB 기반 누적 보고서 렌더링이 성공적으로 완료되었습니다!", flush=True)
+    
+    # 💡 [타임스탬프 파일명 자동화] 실행 시점의 년/월/일/시/분을 파일명에 주입합니다.
+    now_str = datetime.now().strftime("%Y%m%d_%H%M")
+    report_filename = f"passive_recon_report_{now_str}.xlsx"
+    wb.save(f'reports/{report_filename}')
+    print(f"[+] 텍스트 DB 기반 누적 보고서({report_filename}) 렌더링이 성공적으로 완료되었습니다!", flush=True)
 
 if __name__ == '__main__':
     build_advanced_excel_report()
