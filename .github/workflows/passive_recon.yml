@@ -40,7 +40,6 @@ jobs:
         sudo mv trufflehog /usr/local/bin/
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
-    # 💡 [신규 DB 적용] 수집기가 다운로드 대상을 고르기 전, 과거에 받은 JS 리스트를 확보합니다.
     - name: 이전 스캔 결과 다운로드 (과거 JS 다운로드 이력 확보용)
       uses: dawidd6/action-download-artifact@v3
       continue-on-error: true
@@ -274,11 +273,11 @@ jobs:
     - name: 지능형 컬러 엑셀 리포트 제작 및 텍스트 DB 업데이트
       run: python -u txt_to_excel.py
 
-    # 💡 [신규 DB 추가] JS 다운로드 기록 DB(downloaded_js_db.txt)도 함께 묶어서 보관합니다.
+    # 💡 [핵심 변경점] ZIP 압축 파일 목록에 postman_collection_*.json 추가
     - name: 최종 엑셀 리포트 및 텍스트 DB 비밀번호 암호화 (Secure ZIP)
       run: |
         cd reports
-        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_*.xlsx master_url_db.txt downloaded_js_db.txt
+        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_*.xlsx master_url_db.txt downloaded_js_db.txt postman_collection_*.json
         cd ..
 
     - name: 깃허브 아티팩트에 금고형 엑셀 파일 저장
